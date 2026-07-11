@@ -87,6 +87,8 @@ router.post('/create-order', authenticate, authorize('customer'), checkIdempoten
     idempotencyKey: res.locals.idempotencyKey,
   });
 
+  const customer = await User.findById(req.userId).select('name phone').lean();
+
   res.json({
     success: true,
     data: {
@@ -97,8 +99,8 @@ router.post('/create-order', authenticate, authorize('customer'), checkIdempoten
       keyId: process.env.RAZORPAY_KEY_ID,
       bookingNumber: booking.bookingNumber,
       prefill: {
-        name: (await User.findById(req.userId))?.name,
-        contact: booking.customerId,
+        name: customer?.name || '',
+        contact: customer?.phone ? `+91${customer.phone}` : '',
       },
     },
   });

@@ -29,10 +29,10 @@ export function connectSocket() {
 
   socket.on('disconnect', (reason) => {
     console.log('[Socket] Disconnected:', reason);
-    if (reason === 'io server disconnect') {
-      // Server-initiated disconnect — don't auto-reconnect
-      socket.connect();
-    }
+    // NOTE: socket.io handles reconnection automatically via reconnectionAttempts config.
+    // Do NOT call socket.connect() here — it causes an infinite reconnect loop.
+    // The 'io server disconnect' reason is intentional (e.g. auth failure) and
+    // should NOT trigger auto-reconnect. Other reasons are auto-handled by socket.io.
   });
 
   socket.on('connect_error', (err) => {

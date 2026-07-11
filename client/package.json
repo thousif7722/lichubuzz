@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "vite",
+    "dev": "set NODE_OPTIONS=--max-old-space-size=4096 && vite",
     "build": "vite build",
     "preview": "vite preview",
     "lint": "eslint src --ext .jsx,.js"

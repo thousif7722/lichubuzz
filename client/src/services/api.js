@@ -194,6 +194,11 @@ export const apiService = {
   checkIn: (data) => api.post('/attendance/check-in', data),
   checkOut: () => api.post('/attendance/check-out'),
   getMyAttendance: (params) => api.get('/attendance/me', { params }),
+
+  // Hiring / Candidates (Admin)
+  getCandidates: (params) => api.get('/admin/candidates', { params }),
+  updateCandidateStatus: (id, data) => api.put(`/admin/candidates/${id}/status`, data),
+  onboardCandidate: (id) => api.post(`/admin/candidates/${id}/onboard`),
 };
 
 export default api;

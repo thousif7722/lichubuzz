@@ -247,11 +247,12 @@ router.post('/', authenticate, authorize('customer'), bookingRateLimiter, valida
       if (session.inTransaction()) await session.abortTransaction();
       await session.endSession();
     }
-    // FIX: Sanitize error to prevent "Converting circular structure to JSON"
-    // Raw database/mongoose errors can contain the session object which is circular.
-    const sanitizedError = new AppError(err.message, err.status || 500, err.errorCode || 'BOOKING_ERROR');
-    sanitizedError.stack = err.stack; // stack is a string, so it's safe
-    throw sanitizedError;
+    // Safely extract error details to prevent circular JSON issues
+    const errorMessage = typeof err === 'string' ? err : (err?.message || 'Unknown booking error');
+    const dbErrorCode = err?.code || err?.errorCode;
+    logger.error(`[Booking creation failed] ${err?.name || 'Error'}: ${errorMessage}`);
+    
+    throw new AppError(errorMessage, err?.status || 500, dbErrorCode || 'BOOKING_ERROR');
   }
 });
 

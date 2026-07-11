@@ -65,18 +65,7 @@ async function verifyOTP(phone, submittedOtp) {
 
   const stored = await cache.get(`otp:${phone}`);
 
-  // FIX #1: Dev bypass accepts ONLY '123456' (removed '12456' typo)
-  // Development bypass (ONLY if NODE_ENV is development)
-  if (process.env.NODE_ENV === 'development') {
-    logger.debug(`[DEV] Verifying OTP for ${phone}: ${submittedOtp}`);
-    if (submittedOtp === '123456') {
-      logger.warn(`[DEV] Bypass login used for ${phone} — dev mode only`);
-      // Still clear any real OTP if it existed
-      if (stored) await cache.del(`otp:${phone}`);
-      await cache.del(attemptsKey);
-      return true;
-    }
-  }
+
 
   if (!stored) throw new AppError('OTP expired or not found. Please request a new one.', 400);
   if (stored.otp !== submittedOtp) throw new AppError('Invalid OTP. Please try again.', 400);
@@ -278,31 +267,38 @@ router.post('/refresh', validateBody(refreshSchema), async (req, res) => {
 
 /**
  * POST /auth/plus
- * Activate ServiceHub Plus Membership — requires a verified Razorpay payment
+ * Activate ServiceHub Plus Membership
+ * - Development: no payment required (bypass for testing)
+ * - Production: requires valid Razorpay payment verification
  */
 router.post('/plus', authenticate, async (req, res) => {
   const { razorpayOrderId, razorpayPaymentId, razorpaySignature, planMonths = 6 } = req.body;
 
-  if (!razorpayOrderId || !razorpayPaymentId || !razorpaySignature) {
-    throw new AppError('Payment details are required to activate Plus membership', 400);
+  // Development bypass: allow activation without payment
+  if (process.env.NODE_ENV === 'development') {
+    logger.warn(`[DEV] Plus membership activated without payment for user ${req.userId}`);
+  } else {
+    // Production: verify Razorpay payment
+    if (!razorpayOrderId || !razorpayPaymentId || !razorpaySignature) {
+      throw new AppError('Payment details are required to activate Plus membership', 400);
+    }
+
+    const crypto = require('crypto');
+    const expectedSignature = crypto
+      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+      .update(`${razorpayOrderId}|${razorpayPaymentId}`)
+      .digest('hex');
+
+    if (expectedSignature !== razorpaySignature) {
+      logger.warn(`Plus activation: invalid signature for user ${req.userId}`);
+      throw new AppError('Payment verification failed. Please contact support.', 400);
+    }
+
+    // Idempotency — prevent double activation with same payment
+    const alreadyUsed = await cache.get(`plus_payment:${razorpayPaymentId}`);
+    if (alreadyUsed) throw new AppError('This payment has already been used.', 400);
+    await cache.set(`plus_payment:${razorpayPaymentId}`, '1', 30 * 24 * 60 * 60);
   }
-
-  // Verify Razorpay signature before activating
-  const crypto = require('crypto');
-  const expectedSignature = crypto
-    .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
-    .update(`${razorpayOrderId}|${razorpayPaymentId}`)
-    .digest('hex');
-
-  if (expectedSignature !== razorpaySignature) {
-    logger.warn(`Plus activation: invalid signature for user ${req.userId}`);
-    throw new AppError('Payment verification failed. Please contact support.', 400);
-  }
-
-  // Idempotency — prevent double activation with same payment
-  const alreadyUsed = await cache.get(`plus_payment:${razorpayPaymentId}`);
-  if (alreadyUsed) throw new AppError('This payment has already been used.', 400);
-  await cache.set(`plus_payment:${razorpayPaymentId}`, '1', 30 * 24 * 60 * 60);
 
   const user = await User.findById(req.userId);
   if (!user) throw new AppError('User not found', 404);
@@ -315,7 +311,7 @@ router.post('/plus', authenticate, async (req, res) => {
     plan: 'premium',
     expiresAt,
     features: ['No Surge Pricing', 'Flat 10% Off', 'Priority Support'],
-    activatedVia: razorpayPaymentId,
+    activatedVia: razorpayPaymentId || 'dev_bypass',
   };
   await user.save();
 

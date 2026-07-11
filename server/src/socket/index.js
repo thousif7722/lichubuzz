@@ -187,9 +187,13 @@ function initSocket(httpServer) {
       // Store last 50 messages in Redis
       const chatKey = `chat:${data.bookingId}`;
       const client = getRedisClient();
-      await client.rPush(chatKey, JSON.stringify(message));
-      await client.lTrim(chatKey, -50, -1); // Keep last 50 messages
-      await client.expire(chatKey, 7 * 24 * 60 * 60); // 7 day TTL
+      if (client) {
+        await client.rPush(chatKey, JSON.stringify(message));
+        await client.lTrim(chatKey, -50, -1); // Keep last 50 messages
+        await client.expire(chatKey, 7 * 24 * 60 * 60); // 7 day TTL
+      } else {
+        logger.warn(`Redis is offline, skipped storing chat message in cache`);
+      }
 
       // Broadcast to both parties
       io.to(`user:${booking.customerId}`).emit('chat:message', message);
@@ -204,7 +208,14 @@ function initSocket(httpServer) {
     socket.on('chat:history', async ({ bookingId }) => {
       const chatKey = `chat:${bookingId}`;
       const client = getRedisClient();
-      const messages = await client.lRange(chatKey, 0, -1);
+      let messages = [];
+      if (client) {
+        try {
+          messages = await client.lRange(chatKey, 0, -1);
+        } catch (err) {
+          logger.warn('Failed to retrieve chat history from Redis:', err.message);
+        }
+      }
       const parsed = messages.map((m) => {
         try { return JSON.parse(m); } catch { return null; }
       }).filter(Boolean);

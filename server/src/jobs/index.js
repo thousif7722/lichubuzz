@@ -19,13 +19,37 @@ const QUEUE_OPTIONS = {
   },
 };
 
+const createMockQueue = (name) => ({
+  name,
+  add: async (jobName, data, opts) => {
+    logger.warn(`[MockQueue:${name}] Job '${jobName}' called but ignored (Redis is offline).`);
+    return { id: `mock_${Date.now()}` };
+  },
+  on: () => {},
+});
+
 function initQueues() {
+  const redisClient = getRedisClient();
+  if (!redisClient) {
+    logger.warn('⚠️  Redis is down/offline. BullMQ background queues and workers will not be initialized. Using mock queues.');
+    bookingQueue = createMockQueue('booking');
+    paymentQueue = createMockQueue('payment');
+    notificationQueue = createMockQueue('notification');
+    invoiceQueue = createMockQueue('invoice');
+    return;
+  }
+
   try {
     // ── Create Queues ────────────────────────────────────────────────────────────
     bookingQueue = new Queue('booking', QUEUE_OPTIONS);
     paymentQueue = new Queue('payment', QUEUE_OPTIONS);
     notificationQueue = new Queue('notification', QUEUE_OPTIONS);
     invoiceQueue = new Queue('invoice', QUEUE_OPTIONS);
+
+    bookingQueue.on('error', (err) => logger.warn('BullMQ bookingQueue error:', err.message));
+    paymentQueue.on('error', (err) => logger.warn('BullMQ paymentQueue error:', err.message));
+    notificationQueue.on('error', (err) => logger.warn('BullMQ notificationQueue error:', err.message));
+    invoiceQueue.on('error', (err) => logger.warn('BullMQ invoiceQueue error:', err.message));
 
     // ── Create Workers ───────────────────────────────────────────────────────────
     const bookingWorker = createBookingWorker();
@@ -38,6 +62,7 @@ function initQueues() {
     // ── Queue Event Monitoring ───────────────────────────────────────────────────
     for (const queue of [bookingQueue, paymentQueue, notificationQueue]) {
       const events = new QueueEvents(queue.name, { connection: QUEUE_OPTIONS.connection });
+      events.on('error', (err) => logger.warn(`QueueEvents ${queue.name} error:`, err.message));
       events.on('failed', ({ jobId, failedReason }) => {
         logger.error(`Job ${jobId} failed in queue ${queue.name}: ${failedReason}`);
       });
@@ -58,7 +83,7 @@ function initQueues() {
 
 // ── Booking Worker ─────────────────────────────────────────────────────────────
 function createBookingWorker() {
-  return new Worker('booking', async (job) => {
+  const worker = new Worker('booking', async (job) => {
     const { name, data } = job;
     logger.debug(`Processing booking job: ${name}`, data);
 
@@ -78,6 +103,8 @@ function createBookingWorker() {
     ...QUEUE_OPTIONS,
     concurrency: 20,
   });
+  worker.on('error', (err) => logger.warn('Worker booking error:', err.message));
+  return worker;
 }
 
 async function processProviderMatching(job) {
@@ -212,7 +239,7 @@ async function processCommissionDuesCheck() {
 
 // ── Payment Worker ─────────────────────────────────────────────────────────────
 function createPaymentWorker() {
-  return new Worker('payment', async (job) => {
+  const worker = new Worker('payment', async (job) => {
     const { name, data } = job;
 
     switch (name) {
@@ -224,6 +251,8 @@ function createPaymentWorker() {
         logger.warn(`Unknown payment job: ${name}`);
     }
   }, { ...QUEUE_OPTIONS, concurrency: 5 });
+  worker.on('error', (err) => logger.warn('Worker payment error:', err.message));
+  return worker;
 }
 
 async function processRefund(job) {
@@ -278,7 +307,7 @@ async function processProviderSettlement(job) {
 
 // ── Notification Worker ────────────────────────────────────────────────────────
 function createNotificationWorker() {
-  return new Worker('notification', async (job) => {
+  const worker = new Worker('notification', async (job) => {
     const { name, data } = job;
 
     switch (name) {
@@ -290,6 +319,8 @@ function createNotificationWorker() {
         logger.warn(`Unknown notification job: ${name}`);
     }
   }, { ...QUEUE_OPTIONS, concurrency: 50 });
+  worker.on('error', (err) => logger.warn('Worker notification error:', err.message));
+  return worker;
 }
 
 async function sendBookingNotification(data) {
@@ -355,7 +386,7 @@ async function processReferralReward(data) {
 
 // ── Invoice Worker ─────────────────────────────────────────────────────────────
 function createInvoiceWorker() {
-  return new Worker('invoice', async (job) => {
+  const worker = new Worker('invoice', async (job) => {
     const { bookingId } = job.data;
     const { Booking, Transaction } = require('../models');
     const pdfService = require('../services/pdf.service');
@@ -374,6 +405,8 @@ function createInvoiceWorker() {
     await Transaction.findByIdAndUpdate(transaction?._id, { invoiceUrl: url });
     logger.info(`Invoice stored: ${url}`);
   }, { ...QUEUE_OPTIONS, concurrency: 10 });
+  worker.on('error', (err) => logger.warn('Worker invoice error:', err.message));
+  return worker;
 }
 
 // ── Recurring Scheduled Jobs ───────────────────────────────────────────────────
@@ -413,9 +446,9 @@ function getQueues() {
 
 module.exports = {
   initQueues,
-  get bookingQueue() { return bookingQueue; },
-  get paymentQueue() { return paymentQueue; },
-  get notificationQueue() { return notificationQueue; },
-  get invoiceQueue() { return invoiceQueue; },
+  get bookingQueue() { return bookingQueue || createMockQueue('booking'); },
+  get paymentQueue() { return paymentQueue || createMockQueue('payment'); },
+  get notificationQueue() { return notificationQueue || createMockQueue('notification'); },
+  get invoiceQueue() { return invoiceQueue || createMockQueue('invoice'); },
   shutdownQueues,
 };
