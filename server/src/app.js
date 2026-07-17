@@ -137,7 +137,7 @@ const PORT = process.env.PORT || 5000;
 async function bootstrap() {
   // ── Security: Validate required secrets BEFORE starting ───────────────────
   if (process.env.NODE_ENV === 'production') {
-    const REQUIRED_SECRETS = ['JWT_SECRET', 'JWT_REFRESH_SECRET', 'MONGODB_URI', 'RAZORPAY_KEY_SECRET'];
+    const REQUIRED_SECRETS = ['JWT_SECRET', 'JWT_REFRESH_SECRET', 'MONGODB_URI', 'RAZORPAY_KEY_SECRET', 'MSG91_AUTH_KEY', 'MSG91_OTP_TEMPLATE_ID'];
     const missing = REQUIRED_SECRETS.filter((key) => !process.env[key]);
     if (missing.length) {
       logger.error(`❌ FATAL: Missing required environment variables: ${missing.join(', ')}`);

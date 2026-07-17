@@ -25,12 +25,16 @@ services:
         sync: false
       - key: RAZORPAY_WEBHOOK_SECRET
         sync: false
-      - key: TWILIO_ACCOUNT_SID
+      - key: MSG91_AUTH_KEY
         sync: false
-      - key: TWILIO_AUTH_TOKEN
+      - key: MSG91_OTP_TEMPLATE_ID
         sync: false
-      - key: TWILIO_PHONE_NUMBER
-        sync: false
+      - key: MSG91_OTP_LENGTH
+        value: 6
+      - key: MSG91_BASE_URL
+        value: https://control.msg91.com/api/v5
+      - key: MSG91_TIMEOUT_MS
+        value: 10000
       - key: CLOUDINARY_CLOUD_NAME
         sync: false
       - key: CLOUDINARY_API_KEY

@@ -201,9 +201,9 @@ async function processBookingTimeout(job) {
 }
 
 async function processSendOTP(job) {
-  const { phone, otp, type } = job.data;
+  const { phone } = job.data;
   const smsService = require('../services/sms.service');
-  await smsService.sendOTP(phone, otp, type);
+  await smsService.sendOTP(phone);
 }
 
 // ── Commission Dues Enforcement ────────────────────────────────────────────────
@@ -369,7 +369,7 @@ async function sendPaymentNotification(data) {
 
 async function sendOTPNotification(data) {
   const smsService = require('../services/sms.service');
-  await smsService.sendOTP(data.phone, data.otp);
+  await smsService.sendOTP(data.phone);
 }
 
 async function processReferralReward(data) {

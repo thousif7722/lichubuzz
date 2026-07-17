@@ -1,7 +1,6 @@
 'use strict';
 const express = require('express');
 const jwt = require('jsonwebtoken');
-const crypto = require('crypto');
 const { User, Provider } = require('../../models');
 const { cache } = require('../../config/redis');
 const { AppError } = require('../../utils/errors');
@@ -32,51 +31,38 @@ const refreshSchema = Joi.object({
   refreshToken: Joi.string().required(),
 });
 
-// ── OTP Helpers ────────────────────────────────────────────────────────────────
-function generateOTP() {
-  return crypto.randomInt(100000, 999999).toString();
-}
-
-const OTP_TTL = parseInt(process.env.OTP_EXPIRY_MINUTES || '10') * 60; // seconds
+// OTP Helpers
 const OTP_ATTEMPTS_LIMIT = 5;
 const OTP_ATTEMPTS_WINDOW = 15 * 60; // 15 minutes
 
-async function storeOTP(phone, otp) {
-  const ok = await cache.set(`otp:${phone}`, { otp, phone }, OTP_TTL);
-  if (!ok) {
-    if (process.env.NODE_ENV === 'development') {
-      logger.warn(`[DEV] Redis unavailable - skipping OTP storage for ${phone}. Use 123456 to login.`);
-    } else {
-      throw new AppError('OTP service temporarily unavailable. Please try again shortly.', 503);
-    }
-  }
-}
-
-async function verifyOTP(phone, submittedOtp) {
+async function assertOtpAttemptsAvailable(phone) {
   const attemptsKey = `otp_attempts:${phone}`;
   const attempts = await cache.increment(attemptsKey, OTP_ATTEMPTS_WINDOW);
 
-  // FIX #4: Redis null means cache is unavailable — log warning but don't block production
   if (attempts === null) {
-    logger.warn(`[WARN] Redis unavailable — OTP attempt limit bypassed for ${phone}`);
-  } else if (process.env.NODE_ENV !== 'development' && attempts > OTP_ATTEMPTS_LIMIT) {
+    logger.warn(`[WARN] Redis unavailable - OTP attempt limit bypassed for ${phone}`);
+    return attemptsKey;
+  }
+
+  if (process.env.NODE_ENV !== 'development' && attempts > OTP_ATTEMPTS_LIMIT) {
     throw new AppError('Too many OTP attempts. Please wait 15 minutes.', 429);
   }
 
-  const stored = await cache.get(`otp:${phone}`);
+  return attemptsKey;
+}
 
+async function verifyOTP(phone, submittedOtp) {
+  const attemptsKey = await assertOtpAttemptsAvailable(phone);
+  await smsService.verifyOTP(phone, submittedOtp);
 
+  if (attemptsKey) {
+    await cache.del(attemptsKey);
+  }
 
-  if (!stored) throw new AppError('OTP expired or not found. Please request a new one.', 400);
-  if (stored.otp !== submittedOtp) throw new AppError('Invalid OTP. Please try again.', 400);
-
-  // Clear OTP after successful verification
-  await cache.del(`otp:${phone}`);
-  await cache.del(attemptsKey);
   return true;
 }
 
-// ── JWT Helpers ────────────────────────────────────────────────────────────────
+// JWT Helpers
 function generateTokens(userId, role) {
   const accessToken = jwt.sign(
     { userId, role },
@@ -108,19 +94,9 @@ router.post('/send-otp', validateBody(sendOtpSchema), async (req, res) => {
   if (user?.isBlocked) {
     throw new AppError('Your account has been blocked. Contact support.', 403);
   }
+  await smsService.sendOTP(phone);
 
-  const otp = generateOTP();
-  await storeOTP(phone, otp);
-
-  // Send SMS (non-blocking)
-  smsService.sendOTP(phone, otp).catch((err) =>
-    logger.error('Failed to send OTP SMS:', err)
-  );
-
-  logger.info(`OTP generated for ${phone} [${role}]`);
-  if (process.env.NODE_ENV === 'development') {
-    logger.debug(`[DEV ONLY] OTP for ${phone}: ${otp}`);
-  }
+  logger.info(`OTP requested for ${phone} [${role}] via MSG91`);
 
   res.json({
     success: true,
